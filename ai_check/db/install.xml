@@ -1,0 +1,50 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<XMLDB PATH="mod/assign/submission/ai_check/db" VERSION="20250101" COMMENT="XMLDB file for Moodle assignsubmission_ai_check"
+    xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+    xsi:noNamespaceSchemaLocation="../../../../../lib/xmldb/xmldb.xsd"
+>
+  <TABLES>
+    <TABLE NAME="assignsubmission_ai_check" COMMENT="Stores AI check configuration for assignments">
+      <FIELDS>
+        <FIELD NAME="id" TYPE="int" LENGTH="10" NOTNULL="true" SEQUENCE="true"/>
+        <FIELD NAME="assignment" TYPE="int" LENGTH="10" NOTNULL="true" SEQUENCE="false" COMMENT="Foreign key to assignment table"/>
+        <FIELD NAME="enabled" TYPE="int" LENGTH="1" NOTNULL="true" DEFAULT="0" SEQUENCE="false" COMMENT="Whether AI checking is enabled"/>
+        <FIELD NAME="standard_answer" TYPE="text" NOTNULL="false" SEQUENCE="false" COMMENT="Reference answer or key points"/>
+        <FIELD NAME="grading_rubric" TYPE="text" NOTNULL="false" SEQUENCE="false" COMMENT="Grading criteria and suggestions"/>
+        <FIELD NAME="grading_mode" TYPE="char" LENGTH="10" NOTNULL="true" DEFAULT="draft" SEQUENCE="false" COMMENT="draft or publish"/>
+        <FIELD NAME="max_score" TYPE="int" LENGTH="10" NOTNULL="false" SEQUENCE="false" COMMENT="Maximum possible score"/>
+        <FIELD NAME="allowed_filetypes" TYPE="char" LENGTH="255" NOTNULL="true" DEFAULT="pdf,docx" SEQUENCE="false" COMMENT="Allowed file types"/>
+        <FIELD NAME="timecreated" TYPE="int" LENGTH="10" NOTNULL="true" DEFAULT="0" SEQUENCE="false"/>
+        <FIELD NAME="timemodified" TYPE="int" LENGTH="10" NOTNULL="true" DEFAULT="0" SEQUENCE="false"/>
+      </FIELDS>
+      <KEYS>
+        <KEY NAME="primary" TYPE="primary" FIELDS="id"/>
+        <KEY NAME="assignment" TYPE="foreign-unique" FIELDS="assignment" REFTABLE="assign" REFFIELDS="id"/>
+      </KEYS>
+    </TABLE>
+    
+    <TABLE NAME="assignsubmission_ai_check_grades" COMMENT="Stores AI grading results for submissions">
+      <FIELDS>
+        <FIELD NAME="id" TYPE="int" LENGTH="10" NOTNULL="true" SEQUENCE="true"/>
+        <FIELD NAME="submission_id" TYPE="int" LENGTH="10" NOTNULL="true" SEQUENCE="false" COMMENT="Foreign key to assign_submission table"/>
+        <FIELD NAME="task_id" TYPE="char" LENGTH="255" NOTNULL="false" SEQUENCE="false" COMMENT="Document parsing task ID"/>
+        <FIELD NAME="extracted_text" TYPE="text" NOTNULL="false" SEQUENCE="false" COMMENT="Extracted text from document"/>
+        <FIELD NAME="ai_score" TYPE="number" LENGTH="10" NOTNULL="false" DECIMALS="2" SEQUENCE="false" COMMENT="AI assigned score"/>
+        <FIELD NAME="ai_feedback" TYPE="text" NOTNULL="false" SEQUENCE="false" COMMENT="AI generated feedback"/>
+        <FIELD NAME="status" TYPE="char" LENGTH="20" NOTNULL="true" DEFAULT="pending" SEQUENCE="false" COMMENT="pending, processing, completed, failed"/>
+        <FIELD NAME="error_message" TYPE="text" NOTNULL="false" SEQUENCE="false" COMMENT="Error message if processing failed"/>
+        <FIELD NAME="processing_attempts" TYPE="int" LENGTH="3" NOTNULL="true" DEFAULT="0" SEQUENCE="false" COMMENT="Number of processing attempts"/>
+        <FIELD NAME="timecreated" TYPE="int" LENGTH="10" NOTNULL="true" DEFAULT="0" SEQUENCE="false"/>
+        <FIELD NAME="timemodified" TYPE="int" LENGTH="10" NOTNULL="true" DEFAULT="0" SEQUENCE="false"/>
+      </FIELDS>
+      <KEYS>
+        <KEY NAME="primary" TYPE="primary" FIELDS="id"/>
+        <KEY NAME="submission_id" TYPE="foreign-unique" FIELDS="submission_id" REFTABLE="assign_submission" REFFIELDS="id"/>
+      </KEYS>
+      <INDEXES>
+        <INDEX NAME="status" UNIQUE="false" FIELDS="status"/>
+        <INDEX NAME="timecreated" UNIQUE="false" FIELDS="timecreated"/>
+      </INDEXES>
+    </TABLE>
+  </TABLES>
+</XMLDB> 
