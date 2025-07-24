@@ -129,31 +129,19 @@ class assign_submission_ai_check extends assign_submission_plugin {
      * @return bool
      */
     public function save_settings(stdClass $data) {
-        global $DB;
+        $result = true;
         
         if (isset($data->assignsubmission_ai_check_enabled)) {
-            $this->set_config('enabled', $data->assignsubmission_ai_check_enabled);
-            
-            if ($data->assignsubmission_ai_check_enabled) {
-                $this->set_config('standard_answer', $data->assignsubmission_ai_check_standard_answer);
-                $this->set_config('grading_rubric', $data->assignsubmission_ai_check_grading_rubric);
-                $this->set_config('grading_mode', $data->assignsubmission_ai_check_grading_mode);
-                
-                // Force file submission settings when AI check is enabled
-                $this->force_file_submission_settings($data);
-                
-                // Store configuration in a more accessible format for the task
-                $config_data = array(
-                    'standard_answer' => $data->assignsubmission_ai_check_standard_answer,
-                    'grading_rubric' => $data->assignsubmission_ai_check_grading_rubric,
-                    'grading_mode' => $data->assignsubmission_ai_check_grading_mode
-                );
-                
-                // Store as serialized data for easy retrieval
-                $this->set_config('ai_config', serialize($config_data));
-            }
+            $result = $this->set_config('enabled', $data->assignsubmission_ai_check_enabled);
         }
-        return true;
+        
+        if ($this->get_config('enabled')) {
+            $result = $result && $this->set_config('standard_answer', $data->assignsubmission_ai_check_standard_answer);
+            $result = $result && $this->set_config('grading_rubric', $data->assignsubmission_ai_check_grading_rubric);
+            $result = $result && $this->set_config('grading_mode', $data->assignsubmission_ai_check_grading_mode);
+        }
+        
+        return $result;
     }
 
     /**
@@ -162,19 +150,19 @@ class assign_submission_ai_check extends assign_submission_plugin {
      * @param stdClass $data
      */
     private function force_file_submission_settings(stdClass $data) {
-        // Force file submission to be enabled with specific settings
-        $data->assignsubmission_file_enabled = 1;
-        $data->assignsubmission_file_maxfiles = 1;
-        $data->assignsubmission_file_filetypes = 'pdf,docx';
+        // This is handled by JavaScript, PHP logic removed to prevent conflicts
     }
 
     /**
-     * Validate the settings for this plugin.
+     * This is an over-ride of the assign_submission_plugin method
      *
-     * @param array $data
-     * @return array
+     * @param stdClass|grade_grade $submissionorgrade The submission or grade
+     * @param MoodleQuickForm $mform The form
+     * @param stdClass $data The data
+     * @param int $userid The user id
+     * @return bool
      */
-    public function get_form_elements_for_user(stdClass $submission, MoodleQuickForm $mform, stdClass $data, $userid) {
+    public function get_form_elements_for_user($submissionorgrade, MoodleQuickForm $mform, stdClass $data, $userid) {
         // This plugin doesn't add form elements for users
         // Students upload files through the file submission plugin
         return true;
@@ -182,65 +170,15 @@ class assign_submission_ai_check extends assign_submission_plugin {
 
     /**
      * Process the submission after it's been saved.
+     * This method is now empty because the logic has been moved to an event observer
+     * to ensure it runs after all submission data (including files) is saved.
      *
      * @param stdClass $submission
      * @param stdClass $data
      * @return bool
      */
     public function save(stdClass $submission, stdClass $data) {
-        global $DB;
-
-        if (!$this->is_enabled()) {
-            return true;
-        }
-
-        try {
-            // Check if there's a file submission
-            $fs = get_file_storage();
-            $files = $fs->get_area_files($this->assignment->get_context()->id, 
-                'assignsubmission_file', 'submission_files', $submission->id, 'filename', false);
-
-            if (empty($files)) {
-                return true; // No files to process
-            }
-
-            // Get the first (and should be only) file
-            $file = reset($files);
-            
-            // Create or update AI check record
-            $ai_check_record = $DB->get_record('assignsubmission_ai_check_grades', 
-                array('submission_id' => $submission->id));
-            
-            if (!$ai_check_record) {
-                $ai_check_record = new stdClass();
-                $ai_check_record->submission_id = $submission->id;
-                $ai_check_record->status = 'pending';
-                $ai_check_record->timecreated = time();
-                $ai_check_record->timemodified = time();
-                $ai_check_record->id = $DB->insert_record('assignsubmission_ai_check_grades', $ai_check_record);
-            } else {
-                $ai_check_record->status = 'pending';
-                $ai_check_record->timemodified = time();
-                $DB->update_record('assignsubmission_ai_check_grades', $ai_check_record);
-            }
-
-            // Queue the processing task
-            if (class_exists('\assignsubmission_ai_check\task\process_submission')) {
-                $task = new \assignsubmission_ai_check\task\process_submission();
-                $task->set_custom_data(array(
-                    'submission_id' => $submission->id,
-                    'file_id' => $file->get_id(),
-                    'assignment_id' => $this->assignment->get_instance()->id
-                ));
-                
-                \core\task\manager::queue_adhoc_task($task);
-            }
-
-        } catch (Exception $e) {
-            // Log error but don't fail the submission
-            error_log('AI Check plugin error: ' . $e->getMessage());
-        }
-
+        // All logic moved to the observer in classes/observer.php
         return true;
     }
 
@@ -258,36 +196,110 @@ class assign_submission_ai_check extends assign_submission_plugin {
             return '';
         }
 
-        try {
-            $ai_record = $DB->get_record('assignsubmission_ai_check_grades', 
-                array('submission_id' => $submission->id));
+        $output = '';
+        $scriptincluded = false;
 
-            if (!$ai_record) {
-                return get_string('no_ai_processing', 'assignsubmission_ai_check');
+        // A closure to include the JS only once.
+        $includejs = function() use (&$output, &$scriptincluded) {
+            if ($scriptincluded) {
+                return;
+            }
+            $output .= $this->include_trigger_script();
+            $scriptincluded = true;
+        };
+
+        try {
+            error_log('AI Check view_summary: Checking submission ID ' . $submission->id);
+            
+            $ai_record = $DB->get_record('assignsubmission_ai_check_grades', ['submission_id' => $submission->id]);
+
+            if (!$this->get_config('enabled')) {
+                return ''; // AI not enabled, show nothing.
             }
 
-            $output = '';
+            $manualtriggerallowed = has_capability('moodle/site:config', context_system::instance());
+
+            if (!$ai_record) {
+                $output .= html_writer::div(
+                    html_writer::tag('i', '', ['class' => 'fa fa-info-circle']) . ' ' .
+                    get_string('ai_processing_not_started', 'assignsubmission_ai_check'),
+                    'alert alert-info'
+                );
+                
+                if ($manualtriggerallowed) {
+                    $output .= html_writer::div(
+                        html_writer::tag('button', '🔄 手动触发AI处理 (管理员)', [
+                            'onclick' => 'triggerAIProcessing(' . $submission->id . ', this)',
+                            'class' => 'btn btn-secondary btn-sm',
+                            'style' => 'margin-top: 10px;'
+                        ]),
+                        'manual-trigger-section'
+                    );
+                    $includejs();
+                }
+                
+                return $output;
+            }
+
+            error_log('AI Check view_summary: Found AI record with status: ' . $ai_record->status);
             
             switch ($ai_record->status) {
                 case 'pending':
-                    $output = get_string('ai_processing_pending', 'assignsubmission_ai_check');
+                    $output = html_writer::div(
+                        html_writer::tag('i', '', ['class' => 'fa fa-clock-o']) . ' ' .
+                        get_string('ai_processing_pending', 'assignsubmission_ai_check'),
+                        'alert alert-info'
+                    );
                     break;
                 case 'processing':
-                    $output = get_string('ai_processing_inprogress', 'assignsubmission_ai_check');
+                    $output = html_writer::div(
+                        html_writer::tag('i', '', ['class' => 'fa fa-spinner fa-spin']) . ' ' .
+                        get_string('ai_processing_inprogress', 'assignsubmission_ai_check'),
+                        'alert alert-warning'
+                    );
                     break;
                 case 'completed':
                     $output = $this->format_ai_result($ai_record);
                     break;
                 case 'failed':
-                    $output = get_string('ai_processing_failed', 'assignsubmission_ai_check');
+                    $output = html_writer::div(
+                        html_writer::tag('i', '', ['class' => 'fa fa-exclamation-triangle']) . ' ' .
+                        get_string('ai_processing_failed', 'assignsubmission_ai_check'),
+                        'alert alert-danger'
+                    );
+                    if (!empty($ai_record->error_message)) {
+                        $output .= html_writer::div(
+                            html_writer::tag('small', 'Error: ' . htmlspecialchars($ai_record->error_message)),
+                            'text-muted'
+                        );
+                    }
+                    
+                    if ($manualtriggerallowed) {
+                        $output .= html_writer::div(
+                            html_writer::tag('button', '🔄 重试AI处理', [
+                                'onclick' => 'triggerAIProcessing(' . $submission->id . ', this)',
+                                'class' => 'btn btn-warning btn-sm',
+                                'style' => 'margin-top: 10px;'
+                            ]),
+                            'retry-section'
+                        );
+                        $includejs();
+                    }
                     break;
+                default:
+                    $output = html_writer::div(
+                        'Unknown status: ' . htmlspecialchars($ai_record->status),
+                        'alert alert-secondary'
+                    );
             }
 
             return $output;
         } catch (Exception $e) {
-            // Return empty string on error
             error_log('AI Check view_summary error: ' . $e->getMessage());
-            return '';
+            return html_writer::div(
+                'Debug: Error loading AI status - ' . $e->getMessage(),
+                'alert alert-danger'
+            );
         }
     }
 
@@ -298,20 +310,131 @@ class assign_submission_ai_check extends assign_submission_plugin {
      * @return string
      */
     private function format_ai_result($ai_record) {
-        $output = html_writer::tag('h4', get_string('ai_grading_result', 'assignsubmission_ai_check'));
+        $output = html_writer::div(
+            html_writer::tag('i', '', array('class' => 'fa fa-check-circle text-success')) . ' ' .
+            html_writer::tag('strong', get_string('ai_grading_result', 'assignsubmission_ai_check')),
+            'alert alert-success'
+        );
         
         if ($ai_record->ai_score !== null) {
             $output .= html_writer::tag('p', 
-                get_string('ai_score', 'assignsubmission_ai_check', $ai_record->ai_score));
+                html_writer::tag('strong', get_string('ai_score', 'assignsubmission_ai_check') . ': ') .
+                html_writer::tag('span', $ai_record->ai_score, array('class' => 'badge badge-primary'))
+            );
         }
         
         if (!empty($ai_record->ai_feedback)) {
-            $output .= html_writer::tag('div', 
-                html_writer::tag('strong', get_string('ai_feedback', 'assignsubmission_ai_check')) . 
-                html_writer::tag('p', format_text($ai_record->ai_feedback)));
+            $output .= html_writer::div(
+                html_writer::tag('strong', get_string('ai_feedback', 'assignsubmission_ai_check') . ':') .
+                html_writer::tag('div', format_text($ai_record->ai_feedback), array('class' => 'mt-2')),
+                'mt-3'
+            );
         }
 
         return $output;
+    }
+
+    /**
+     * Debug method to manually trigger AI processing for a submission.
+     * This is for troubleshooting purposes only.
+     * 
+     * @param int $submission_id
+     * @return array
+     */
+    public function debug_trigger_ai_processing($submission_id) {
+        global $DB;
+        
+        try {
+            $submission = $DB->get_record('assign_submission', ['id' => $submission_id]);
+            if (!$submission) {
+                return ['success' => false, 'error' => 'Submission not found'];
+            }
+
+            // Get assignment record, derive course-module id (cmid)
+            $assignment_record = $DB->get_record('assign', ['id' => $submission->assignment]);
+            if (!$assignment_record) {
+                return ['success' => false, 'error' => 'Assignment not found'];
+            }
+
+            $cm = get_coursemodule_from_instance('assign', $assignment_record->id, $assignment_record->course, false, MUST_EXIST);
+            $cmid = $cm->id;
+
+            // Create assignment object – 兼容不同 Moodle 版本
+            if (method_exists('assign', 'create')) {
+                $assignment = \assign::create($cmid);
+            } else {
+                $context = \context_module::instance($cmid);
+                $assignment = new \assign($cmid, $assignment_record, $context, $cm);
+            }
+            $aicheckplugin = $assignment->get_submission_plugin_by_type('ai_check');
+            
+            if (!$aicheckplugin || !$aicheckplugin->is_enabled()) {
+                return ['success' => false, 'error' => 'AI Check plugin not enabled'];
+            }
+
+            // Check if there's a file submission
+            $fs = get_file_storage();
+            $files = $fs->get_area_files($assignment->get_context()->id,
+                'assignsubmission_file', 'submission_files', $submission->id, 'filename', false);
+
+            if (empty($files)) {
+                return ['success' => false, 'error' => 'No files found'];
+            }
+
+            $file = reset($files);
+
+            // Create or update AI check record
+            $aicheckrecord = $DB->get_record('assignsubmission_ai_check_grades', ['submission_id' => $submission->id]);
+
+            if (!$aicheckrecord) {
+                $aicheckrecord = new \stdClass();
+                $aicheckrecord->submission_id = $submission->id;
+                $aicheckrecord->status = 'pending';
+                $aicheckrecord->timecreated = time();
+                $aicheckrecord->timemodified = time();
+                $aicheckrecord->processing_attempts = 0;
+                $aicheckrecord->error_message = '';
+                $aicheckrecord->id = $DB->insert_record('assignsubmission_ai_check_grades', $aicheckrecord);
+            } else {
+                $aicheckrecord->status = 'pending';
+                $aicheckrecord->processing_attempts = 0;
+                $aicheckrecord->error_message = '';
+                $aicheckrecord->timemodified = time();
+                $DB->update_record('assignsubmission_ai_check_grades', $aicheckrecord);
+            }
+
+            // Queue the processing task
+            $task = new \assignsubmission_ai_check\task\process_submission();
+            $task->set_custom_data([
+                'submission_id' => $submission->id,
+                'file_id'       => $file->get_id(),
+                'assignment_id' => $submission->assignment,
+            ]);
+            \core\task\manager::queue_adhoc_task($task);
+
+            return ['success' => true, 'message' => 'AI processing task queued successfully'];
+            
+        } catch (\Exception $e) {
+            return ['success' => false, 'error' => $e->getMessage()];
+        }
+    }
+
+    /**
+     * Produces a summary of what was submitted for this plugin.
+     *
+     * @param stdClass $submission
+     * @return array An array containing the text and html summary.
+     */
+    public function submission_summary_for_messages(stdClass $submission): array {
+        if (!$this->is_enabled()) {
+            return ['', ''];
+        }
+
+        $status = get_string('ai_processing_pending', 'assignsubmission_ai_check');
+        $textsummary = get_string('pluginname', 'assignsubmission_ai_check') . ': ' . $status;
+        $htmlsummary = html_writer::tag('strong', get_string('pluginname', 'assignsubmission_ai_check') . ':') . ' ' . $status;
+
+        return [$textsummary, $htmlsummary];
     }
 
     /**
@@ -367,5 +490,59 @@ class assign_submission_ai_check extends assign_submission_plugin {
     public function copy_submission(stdClass $sourcesubmission, stdClass $destsubmission) {
         // No copying needed for this plugin
         return true;
+    }
+
+    /**
+     * Includes the JavaScript needed for the manual trigger button.
+     * @return string The script tag.
+     */
+    private function include_trigger_script() {
+        // This function should only be called once per page load.
+        return html_writer::script('
+            if (typeof window.triggerAIProcessing === "undefined") {
+                window.triggerAIProcessing = function(submissionId, button) {
+                    if (confirm("确定要手动触发或重试AI处理吗？")) {
+                        button.disabled = true;
+                        button.innerText = "处理中...";
+
+                        fetch(M.cfg.wwwroot + "/mod/assign/submission/ai_check/manual_trigger.php", {
+                            method: "POST",
+                            headers: {
+                                "Content-Type": "application/x-www-form-urlencoded",
+                            },
+                            body: "submission_id=" + submissionId + "&sesskey=" + M.cfg.sesskey
+                        })
+                        .then(response => {
+                            if (!response.ok) {
+                                return response.text().then(text => {
+                                    try {
+                                        const errorData = JSON.parse(text);
+                                        throw new Error(errorData.error || "Server error with no details.");
+                                    } catch (e) {
+                                        throw new Error("Server returned a non-JSON error. Check PHP logs.");
+                                    }
+                                });
+                            }
+                            return response.json();
+                        })
+                        .then(data => {
+                            if (data.success) {
+                                alert("AI处理任务已成功添加到队列！页面将刷新。");
+                                location.reload();
+                            } else {
+                                alert("错误: " + (data.error || "未知错误，请检查服务器日志。"));
+                                button.disabled = false;
+                                button.innerText = "🔄 重试AI处理";
+                            }
+                        })
+                        .catch(error => {
+                            alert("请求失败: " + error.message);
+                            button.disabled = false;
+                            button.innerText = "🔄 重试AI处理";
+                        });
+                    }
+                }
+            }
+        ');
     }
 } 

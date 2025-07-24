@@ -47,14 +47,15 @@ $string['ai_manager_required'] = 'AI智能批改功能需要安装 local_ai_mana
 
 // Processing status
 $string['no_ai_processing'] = '暂无AI批改记录';
+$string['ai_processing_not_started'] = 'AI批改尚未开始 - 请等待系统处理';
 $string['ai_processing_pending'] = 'AI批改排队中...';
 $string['ai_processing_inprogress'] = 'AI正在批改中...';
 $string['ai_processing_failed'] = 'AI批改失败，请联系教师';
 
 // Results display
 $string['ai_grading_result'] = 'AI批改结果';
-$string['ai_score'] = 'AI评分：{$a}';
-$string['ai_feedback'] = 'AI评语：';
+$string['ai_score'] = 'AI评分';
+$string['ai_feedback'] = 'AI评语';
 
 // API settings
 $string['api_settings'] = 'API设置';

@@ -15,7 +15,7 @@
 // along with Moodle.  If not, see <http://www.gnu.org/licenses/>.
 
 /**
- * Version information for the AI Check assignment submission plugin.
+ * Event observers for the AI Check assignment submission plugin.
  *
  * @package    assignsubmission_ai_check
  * @copyright  2025 AI Check Team
@@ -24,14 +24,13 @@
 
 defined('MOODLE_INTERNAL') || die();
 
-$plugin = new stdClass();
-$plugin->component = 'assignsubmission_ai_check';
-$plugin->version = 2025010106;  // Fix compatibility for is_submission_plugin_enabled absence
-$plugin->requires = 2022112800; // Moodle 4.1+
-$plugin->maturity = MATURITY_ALPHA;
-$plugin->release = 'v1.0.6-alpha';
-
-$plugin->dependencies = array(
-    'mod_assign' => 2022112800,
-    // 'local_ai_manager' => 2024042200, // Soft dependency - checked at runtime
+$observers = array(
+    array(
+        'eventname' => '\core\event\user_submission_created',
+        'callback'  => 'assignsubmission_ai_check\observer::submission_created_or_updated',
+    ),
+    array(
+        'eventname' => '\core\event\user_submission_updated',
+        'callback'  => 'assignsubmission_ai_check\observer::submission_created_or_updated',
+    ),
 ); 

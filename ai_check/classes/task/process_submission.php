@@ -50,7 +50,7 @@ class process_submission extends \core\task\adhoc_task {
 
         $data = $this->get_custom_data();
         $submission_id = $data->submission_id;
-        $file_id = $data->file_id;
+        $file_id = isset($data->file_id) ? $data->file_id : null;
         $assignment_id = $data->assignment_id;
 
         try {
@@ -70,10 +70,31 @@ class process_submission extends \core\task\adhoc_task {
             $DB->update_record('assignsubmission_ai_check_grades', $ai_record);
 
             // Get the file
-            $fs = get_file_storage();
-            $file = $fs->get_file_by_id($file_id);
+            $file = null;
+            if ($file_id) {
+                // Try to get file by ID first
+                $fs = get_file_storage();
+                $file = $fs->get_file_by_id($file_id);
+            }
+            
             if (!$file) {
-                throw new \Exception('File not found: ' . $file_id);
+                // If file_id is null or file not found, search for files in submission
+                $assignment = $DB->get_record('assign', array('id' => $assignment_id), '*', MUST_EXIST);
+                $cm = get_coursemodule_from_instance('assign', $assignment->id, $assignment->course, false, MUST_EXIST);
+                $context = \context_module::instance($cm->id);
+                
+                $fs = get_file_storage();
+                $files = $fs->get_area_files($context->id,
+                    'assignsubmission_file', 'submission_files', $submission->id, 'filename', false);
+                
+                if (empty($files)) {
+                    throw new \Exception('No files found for submission: ' . $submission_id);
+                }
+                
+                $file = reset($files);
+                mtrace('AI Check: Found file in submission: ' . $file->get_filename());
+            } else {
+                mtrace('AI Check: Using file ID: ' . $file_id);
             }
 
             // Step 1: Extract text from document
@@ -120,6 +141,8 @@ class process_submission extends \core\task\adhoc_task {
             // Step 6: Update assignment grade if configured
             $this->update_assignment_grade($submission, $ai_result, $ai_settings, $assignment);
 
+            mtrace('AI Check processing completed successfully for submission ' . $submission_id);
+
         } catch (\Exception $e) {
             // Update status to failed
             $ai_record = $DB->get_record('assignsubmission_ai_check_grades', 
@@ -143,6 +166,7 @@ class process_submission extends \core\task\adhoc_task {
                 $retry_task->set_custom_data($data);
                 $retry_task->set_next_run_time(time() + (60 * $ai_record->processing_attempts)); // Exponential backoff
                 \core\task\manager::queue_adhoc_task($retry_task);
+                mtrace('AI Check: Queued retry task for submission ' . $submission_id);
             }
         }
     }
@@ -155,44 +179,21 @@ class process_submission extends \core\task\adhoc_task {
      */
     private function get_ai_settings($assignment_id) {
         global $DB;
+        $settings = [];
 
-        // Get AI config from the plugin configuration
-        $ai_config_record = $DB->get_record('assign_plugin_config', array(
+        // Correctly load settings from assign_plugin_config
+        $configs = $DB->get_records('assign_plugin_config', [
             'assignment' => $assignment_id,
             'plugin' => 'ai_check',
-            'subtype' => 'assignsubmission',
-            'name' => 'ai_config'
-        ));
+            'subtype' => 'assignsubmission'
+        ]);
 
-        if (!$ai_config_record) {
-            // Fallback: try to get individual settings
-            $settings = array();
-            $config_names = array('standard_answer', 'grading_rubric', 'grading_mode');
-            
-            foreach ($config_names as $name) {
-                $config = $DB->get_record('assign_plugin_config', array(
-                    'assignment' => $assignment_id,
-                    'plugin' => 'ai_check',
-                    'subtype' => 'assignsubmission',
-                    'name' => $name
-                ));
-                
-                if ($config) {
-                    $settings[$name] = $config->value;
-                }
-            }
-            
-            if (empty($settings)) {
-                throw new \Exception('AI check configuration not found for assignment: ' . $assignment_id);
-            }
-            
-            return $settings;
+        if (empty($configs)) {
+            throw new \Exception('AI check configuration not found for assignment: ' . $assignment_id);
         }
 
-        // Unserialize the config data
-        $settings = unserialize($ai_config_record->value);
-        if ($settings === false) {
-            throw new \Exception('Invalid AI check configuration for assignment: ' . $assignment_id);
+        foreach ($configs as $config) {
+            $settings[$config->name] = $config->value;
         }
 
         return $settings;
